@@ -1,7 +1,10 @@
 SCMapper=function(Object_A,Object_B,
          annotation_name_A='seurat_clusters',annotation_name_B='seurat_clusters',
          Name_of_object_A,Name_of_object_B,
-         numbersofPC=30,roundsofrandomization=1000,Normalization_method='LogNormalize',harmonize=T,p.val.threshold=0.05,prediction_plot_ncol=2,number_of_core=4) {
+         Batch_A=NULL,Batch_B=NULL,
+         numbersofPC=30,roundsofrandomization=1000,
+         Normalization_method='LogNormalize',nFeature=2000,harmonize=F,
+         p.val.threshold=0.05,prediction_plot_ncol=2,number_of_core=4,mt.feature.pattern=NULL) {
   require(cluster)
   require(reshape)
   require(ggplot2)
@@ -11,60 +14,86 @@ SCMapper=function(Object_A,Object_B,
   require(doParallel)
   require(doSNOW)
   require(lsa)
-
+  require(scater)
+  require(muscat)
+  source('utils.R')
   
+
   Object_A@meta.data[['scmapper']]=paste(Name_of_object_A,
                                          '_',Object_A@meta.data[[annotation_name_A]],sep = '')
+  levels(Object_A@meta.data[['scmapper']])=paste(Name_of_object_A,
+                                                 '_',levels(Object_A@meta.data[[annotation_name_A]]),sep = '')
   Object_A@meta.data[['object']]=Name_of_object_A
   Object_B@meta.data[['scmapper']]=paste(Name_of_object_B,
                                          '_',Object_B@meta.data[[annotation_name_B]],sep = '')
+  levels(Object_B@meta.data[['scmapper']])=paste(Name_of_object_B,
+                                                 '_',levels(Object_B@meta.data[[annotation_name_B]]),sep = '')
   Object_B@meta.data[['object']]=Name_of_object_B
   
   Merged=merge(Object_A,Object_B)
-  Merged[['percent.mt']]=NULL
+  filtering <- SingleCellExperiment(
+    assays = list(counts = Merged@assays$RNA@counts), 
+    colData = Merged@meta.data
+  )
+  
+  filtering <- filtering[rowSums(counts(filtering) > 1) >= 1, ]
+  Merged=CreateSeuratObject(counts(filtering),meta.data = data.frame(filtering@colData))
+  rm(filtering)
+
+  
+  Merged$percent.mt=ifelse(is.null(mt.feature.pattern),yes = 0,no=PercentageFeatureSet(Merged,pattern = mt.feature.pattern))
+  if (all(Merged[['percent.mt']]==0)) {
+    Merged[['percent.mt']]=NULL
+  }
   DefaultAssay(Merged)='RNA'
   if (Normalization_method=='SCT'){
+    ncells=ifelse(ncol(Merged)*0.5<5000,yes = 5000,no=5000)
+    
     if ('percent.mt'%in%names(Merged@meta.data)) {
-      Merged=SCTransform(Merged,conserve.memory = T,vars.to.regress = 'percent.mt',verbose = F)
+      Merged=SCTransform(Merged,conserve.memory = T,vars.to.regress = 'percent.mt',
+                         verbose = F,variable.features.n = nFeature,ncells = ncells)
       Merged=RunPCA(Merged,npcs = numbersofPC,verbose = F)
+
     }
     else {
-      Merged=SCTransform(Merged,conserve.memory = T)
+      Merged=SCTransform(Merged,conserve.memory = T,variable.features.n = nFeature,ncells = ncells,verbose = F)
       Merged=RunPCA(Merged,npcs = numbersofPC,verbose = F)
+
     }
+    Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
+                                                         Name_of_object_B=Name_of_object_B,assay.use = 'SCT')
     print('Finished SCT Normalization')
   }
   if (Normalization_method=='LogNormalize'){
     Merged=NormalizeData(Merged,verbose = F)
-    Merged=FindVariableFeatures(Merged,verbose = F)
-    Merged=ScaleData(Merged,verbose = F)
+    Merged=FindVariableFeatures(Merged,verbose = F,nfeatures = nFeature)
+    
+    Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
+                                                         Name_of_object_B=Name_of_object_B,assay.use = 'RNA')
+    
+    
+    if ('percent.mt'%in%names(Merged@meta.data)) {
+      Merged=ScaleData(Merged,verbose = F,vars.to.regress = 'percent.mt')
+      
+    }
+    else {
+      Merged=ScaleData(Merged,verbose = F)
+    }
     Merged=RunPCA(Merged,npcs = numbersofPC,verbose = F)
+
     print('Finished Log Normalization')
   }
   if (Normalization_method=='None'){
-    Merged=FindVariableFeatures(Merged,verbose = F)
+    Merged=FindVariableFeatures(Merged,verbose = F,nfeatures = nFeature)
     Merged=ScaleData(Merged,verbose = F)
     Merged=RunPCA(Merged,npcs = numbersofPC,verbose = F)
+    Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
+                                                         Name_of_object_B=Name_of_object_B,assay.use = 'RNA')
 
     
     
   }
   
-  if (harmonize) {
-    if (Normalization_method=='SCT') {
-      Merged=RunHarmony(Merged,group.by.vars = 'object',max.iter.harmony = 1000,
-                        max.iter.cluster = 1000,verbose = F,assay.use='SCT')
-      PCA.space=Merged@reductions$harmony@cell.embeddings[,seq(1,numbersofPC)]
-      
-    }
-    else {Merged=RunHarmony(Merged,group.by.vars = 'object',max.iter.harmony = 1000,
-                      max.iter.cluster = 1000,verbose = F)
-    PCA.space=Merged@reductions$harmony@cell.embeddings[,seq(1,numbersofPC)]
-    }
-  }
-  else {
-    PCA.space=Merged@reductions$pca@cell.embeddings[,seq(1,numbersofPC)]
-  }
   mapping.table=data.frame(cell=rownames(Merged@meta.data),cluster=Merged@meta.data[['scmapper']])
   Object_A_annotation=mapping.table$cluster[grepl(Name_of_object_A,mapping.table$cluster)]
   Object_A_annotation=as.character(unique(Object_A_annotation))
@@ -82,220 +111,104 @@ SCMapper=function(Object_A,Object_B,
                                       Object_B_annotation))
   pval.matrix=pval.matrix[order((rownames(pval.matrix))),
                           order((colnames(pval.matrix)))]
-
+  
   Detail_list=list()
   for (i in rownames(zscore.matrix)) {
     Detail_list[[i]]$Aggregated.randomization.results=data.frame(Distance=0,group='',X='',Y='')
+    Detail_list[[i]]$ttest.results=list()
+    
   }
+  ####If harmonized####
+  if (harmonize) {
+
+    PCA.space=harmonize_within_sample(harmonize=harmonize,
+                                      Normalization_method=Normalization_method,Merged,
+                                      numbersofPC=numbersofPC,
+                                      Batch_A=Batch_A,
+                                      Batch_B=Batch_B,
+                                      Name_of_object_A=Name_of_object_A,
+                                      Name_of_object_B=Name_of_object_B)
+    harmonized.space=PCA.space$harmonized.space
+    original.space=PCA.space$original.space
+    
+    meta.data=Merged@meta.data
+
+    rm(Merged)
+    cl <- makeCluster(number_of_core)
+    registerDoSNOW(cl)
+    
+    Test_Candidates=paste(rep(rownames(zscore.matrix), each = length(colnames(zscore.matrix))), colnames(zscore.matrix), sep = "Object_42")
+    iterations <- length(Test_Candidates)
+    
+    pb <- txtProgressBar(max = iterations, style = 3)
+    progress <- function(n) setTxtProgressBar(pb, n)
+    
+    opts <- list(progress = progress)
+
+    x=foreach(i=Test_Candidates,.packages=c('ggplot2','lsa','fpc','cluster'), .options.snow = opts) %dopar% {
+      source('utils.R')
+      
+      Results=sampling_and_distance_test(i,mapping.table=mapping.table,harmonized.space=harmonized.space,original.space=original.space,roundsofrandomization=roundsofrandomization
+                                         ,meta.data=meta.data,Name_of_object_A=Name_of_object_A,Name_of_object_B=Name_of_object_B,Expression.Correlation.Matrix=Expression.Correlation.Matrix)
+      return(Results)
+    }
+  }
+  ####If not harmonized####
+  else {
+    PCA.space=harmonize_within_sample(harmonize=harmonize,
+                            Normalization_method=Normalization_method,Merged,
+                            numbersofPC=numbersofPC,
+                            Batch_A=Batch_A,
+                            Batch_B=Batch_B,
+                            Name_of_object_A=Name_of_object_A,
+                            Name_of_object_B=Name_of_object_B) 
+
   meta.data=Merged@meta.data
+
   rm(Merged)
-  ####Parallelization####
   cl <- makeCluster(number_of_core)
   registerDoSNOW(cl)
-  
   Test_Candidates=paste(rep(rownames(zscore.matrix), each = length(colnames(zscore.matrix))), colnames(zscore.matrix), sep = "Object_42")
   iterations <- length(Test_Candidates)
-  
   pb <- txtProgressBar(max = iterations, style = 3)
   progress <- function(n) setTxtProgressBar(pb, n)
-  
   opts <- list(progress = progress)
-  
-  x=foreach(i=Test_Candidates,.packages=c('ggplot2','lsa'), .options.snow = opts) %dopar% {
-    a=as.character(unlist(strsplit(i,split = "Object_42")))[1]
-    b=as.character(unlist(strsplit(i,split = "Object_42")))[2]
+  x=foreach(i=Test_Candidates,.packages=c('ggplot2','lsa','fpc','cluster'), .options.snow = opts) %dopar% {
+    source('utils.R')
     
-    euclidean <- function(x, y) sqrt(sum((x - y)^2))
-    AnnotationA=mapping.table$cell[mapping.table$cluster==a]
-    
-    AnnotationA.centroid=apply(PCA.space[AnnotationA,],2,median)
-
-    Aggregated.randomization.results=data.frame(Distance=0,group='',X='',Y='')
-    AnnotationB=mapping.table$cell[mapping.table$cluster==b]
-    
-    AnnotationB.centroid=apply(PCA.space[AnnotationB,],2,median)
-    
-    true.distance=c()
-    bootstrapping.distance=c()
-    bootstrapping.sampling.distance=c()
-    for (k in 1:roundsofrandomization) {
-      sub_sampling_size=runif(1,min=0.5,max = 0.75)
-      if (sub_sampling_size*length(AnnotationA)<=2) {
-        sub_sampling_1=PCA.space[AnnotationA,]
-        
-        temp=PCA.space[sample(AnnotationA,size = 2,replace = T),]
-        rownames(temp)=paste0(rownames(temp),'bootstrap')
-        sub_sampling_1=rbind(sub_sampling_1,temp)
-        
-        sub_sampling_2=PCA.space[AnnotationB,]
-        temp=PCA.space[sample(AnnotationB,size = 2,replace = T),]
-        rownames(temp)=paste0(rownames(temp),'bootstrap')
-        sub_sampling_2=rbind(sub_sampling_2,temp)
-        
-        sub_sampling_1=apply(sub_sampling_1,2,median)
-        sub_sampling_2=apply(sub_sampling_2,2,median)
-      }
-      else {
-        
-        sub_sampling_1=sample(AnnotationA,size = sub_sampling_size*length(AnnotationA) ,replace = T)
-        sub_sampling_2=sample(AnnotationB,size = sub_sampling_size*length(AnnotationB) ,replace = T)
-        sub_sampling_1=apply(PCA.space[sub_sampling_1,],2,median)
-        sub_sampling_2=apply(PCA.space[sub_sampling_2,],2,median)
-      }
-
-      sub_sampling_distance=euclidean(sub_sampling_1,sub_sampling_2)
-      true.distance=c(true.distance,sub_sampling_distance)
-      
-      sampling_pool=rownames(PCA.space)
-      sampling_pool.A=sampling_pool[sampling_pool%in%rownames(meta.data)[meta.data$object==Name_of_object_A]]
-      sampling_pool.B=sampling_pool[sampling_pool%in%rownames(meta.data)[meta.data$object==Name_of_object_B]]
-      
-      sampling.subset.A=sample(sampling_pool.A,size = (length(AnnotationA)+length(AnnotationB))/2,replace = T)
-      sampling.subset.B=sample(sampling_pool.B,size = (length(AnnotationA)+length(AnnotationB))/2,replace = T)
-      sampling.subset.A.centroid=apply(PCA.space[sampling.subset.A,],2,median)
-      
-      sampling.subset.B.centroid=apply(PCA.space[sampling.subset.B,],2,median)
-
-      sampling.distance=((euclidean(sampling.subset.B.centroid,AnnotationA.centroid))+
-                           (euclidean(sampling.subset.A.centroid,AnnotationB.centroid)))/2
-      sampling.distance=(euclidean(sampling.subset.B.centroid,AnnotationA.centroid))
-      bootstrapping.sampling.distance=c(bootstrapping.sampling.distance,sampling.distance)
-    }
-    
-    Comparison.results=data.frame(Distance=bootstrapping.sampling.distance,group=rep('Randomized',length(bootstrapping.sampling.distance)))
-    Comparison.results=rbind(Comparison.results,data.frame(Distance=true.distance,group=rep(paste(a,b),length(true.distance))))
-    Comparison.results$X=a
-    Comparison.results$Y=b
-    Aggregated.randomization.results=rbind(Aggregated.randomization.results,
-                                                            Comparison.results)
-    wilcox.results=wilcox.test(log10(true.distance+1),log10(bootstrapping.sampling.distance+1),alternative = 'less')
-    zscore=median(true.distance)-median(bootstrapping.sampling.distance)
-    zscore.matrix[a,b]=mean(true.distance)-mean(bootstrapping.sampling.distance)
-    pval.matrix[a,b]=wilcox.results$p.value
-    Aggregated.randomization.results=Aggregated.randomization.results[-1,]
-    Aggregated.randomization.results=Aggregated.randomization.results
-    
-    Aggregated.Randomization.Results.plot=ggplot(Aggregated.randomization.results[Aggregated.randomization.results$group!='Randomized',],
-                                                 aes(x=Distance,fill=Y))+geom_density(alpha=0.75)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
-    Aggregated.randomization.results.plot=Aggregated.Randomization.Results.plot
-    
-    
-    Results=list(a,b,zscore,wilcox.results,Aggregated.randomization.results,Aggregated.Randomization.Results.plot)
+    Results=sampling_and_distance_test(i,mapping.table=mapping.table,PCA.space=PCA.space,roundsofrandomization=roundsofrandomization,meta.data=meta.data
+                                       ,Name_of_object_A=Name_of_object_A,Name_of_object_B=Name_of_object_B,Expression.Correlation.Matrix=Expression.Correlation.Matrix)
     return(Results)
+  }
   }
   close(pb)
   stopCluster(cl)
   
   for (i in 1:length(x)) {
     temp=x[[i]]
-    zscore.matrix[temp[[1]],temp[[2]]]=temp[[3]]
-    pval.matrix[temp[[1]],temp[[2]]]=temp[[4]]$p.value
-    Detail_list[[temp[[1]]]]$Aggregated.randomization.results=rbind(Detail_list[[temp[[1]]]]$Aggregated.randomization.results,
-                                                                    temp[[5]])
 
+    zscore.matrix[temp$a,temp$b]=temp$zscore
+    pval.matrix[temp$a,temp$b]=temp$wilcox.results$p.value
+    Detail_list[[temp$a]]$Aggregated.randomization.results=rbind(Detail_list[[temp$a]]$Aggregated.randomization.results,
+                                                                    temp$Aggregated.randomization.results)
   }
   for (i in rownames(zscore.matrix)) {
     Detail_list[[i]]$Aggregated.randomization.results=Detail_list[[i]]$Aggregated.randomization.results[-1,]
     Aggregated.randomization.results=Detail_list[[i]]$Aggregated.randomization.results
-    Aggregated.Randomization.Results.plot=ggplot(Aggregated.randomization.results[Aggregated.randomization.results$group!='Randomized',],
-                                                 aes(x=Distance,fill=Y))+geom_density(alpha=0.75)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
+    Aggregated.Results.plot=ggplot(Aggregated.randomization.results[Aggregated.randomization.results$group!='Randomized',],
+                                   aes(x=Distance,fill=Y))+geom_density(alpha=0.75)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
     
+    Detail_list[[i]]$Aggregated.Results.plot=Aggregated.Results.plot
+    Aggregated.Randomization.Results.plot=ggplot(Aggregated.randomization.results,
+                                                 aes(x=Distance,fill=group))+geom_density(alpha=0.75)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
     Detail_list[[i]]$Aggregated.Randomization.Results.plot=Aggregated.Randomization.Results.plot
-
+    
   }
   rm(x)
   gc()
-
-  ####
-  #for (i in 1:nrow(zscore.matrix)) {
-  #  AnnotationA=mapping.table$cell[mapping.table$cluster==rownames(zscore.matrix)[i]]
-
-#    AnnotationA.centroid=apply(PCA.space[AnnotationA,],2,median)
-#    Detail_list[[rownames(zscore.matrix)[i]]]=list()
-#    Detail_list[[rownames(zscore.matrix)[i]]]$Aggregated.randomization.results=data.frame(Distance=0,group='',X='',Y='')
-#    for (j in 1:ncol(zscore.matrix)) {
-#      AnnotationB=mapping.table$cell[mapping.table$cluster==colnames(zscore.matrix)[j]]#
-
-#      AnnotationB.centroid=apply(PCA.space[AnnotationB,],2,median)
-      
- #     true.distance=c()
-      #Bootstraping true distance
-   #   bootstrapping.distance=c()
-  #    bootstrapping.sampling.distance=c()
-     # for (k in 1:roundsofrandomization) {
-        # Booststrap
-      #  sub_sampling_size=runif(1,min=0.5,max = 0.75)
-      #  if (sub_sampling_size*length(AnnotationA)<=2) {
-        #  sub_sampling_1=PCA.space[AnnotationA,]
-
-        #  temp=PCA.space[sample(AnnotationA,size = 2,replace = T),]
-        #  rownames(temp)=paste0(rownames(temp),'bootstrap')
-         # sub_sampling_1=rbind(sub_sampling_1,temp)
-          
-         # sub_sampling_2=PCA.space[AnnotationB,]
-        #  temp=PCA.space[sample(AnnotationB,size = 2,replace = T),]
-         # rownames(temp)=paste0(rownames(temp),'bootstrap')
-         # sub_sampling_2=rbind(sub_sampling_2,temp)
-
-         # sub_sampling_1=apply(sub_sampling_1,2,median)
-        #  sub_sampling_2=apply(sub_sampling_2,2,median)
-       # }
-      #  else {
-          
-        #  sub_sampling_1=sample(AnnotationA,size = sub_sampling_size*length(AnnotationA) ,replace = T)
-       #   sub_sampling_2=sample(AnnotationB,size = sub_sampling_size*length(AnnotationB) ,replace = T)
-       #   sub_sampling_1=apply(PCA.space[sub_sampling_1,],2,median)
-       #   sub_sampling_2=apply(PCA.space[sub_sampling_2,],2,median)
-      #  }
-
-       # sub_sampling_distance=euclidean(sub_sampling_1,sub_sampling_2)
-      #  true.distance=c(true.distance,sub_sampling_distance)
-        
-      #  sampling_pool=rownames(PCA.space)
-      #  sampling_pool.A=sampling_pool[sampling_pool%in%rownames(meta.data)[meta.data$object==Name_of_object_A]]
-      #  sampling_pool.B=sampling_pool[sampling_pool%in%rownames(meta.data)[meta.data$object==Name_of_object_B]]
-        
-      #  sampling.subset.A=sample(sampling_pool.A,size = (length(AnnotationA)+length(AnnotationB))/2,replace = T)
-      #  sampling.subset.B=sample(sampling_pool.B,size = (length(AnnotationA)+length(AnnotationB))/2,replace = T)
-      #  sampling.subset.A.centroid=apply(PCA.space[sampling.subset.A,],2,median)
-        
-      #  sampling.subset.B.centroid=apply(PCA.space[sampling.subset.B,],2,median)
-
-      #  bootstrapping.sampling.distance=c(bootstrapping.sampling.distance,(euclidean(sampling.subset.B.centroid,AnnotationA.centroid)+euclidean(sampling.subset.A.centroid,AnnotationB.centroid))/2)
-      #}
-      
-      #Comparison.results=data.frame(Distance=bootstrapping.sampling.distance,
-      #                              group=rep('Randomized',length(bootstrapping.sampling.distance)))
-      #Comparison.results=rbind(Comparison.results,
-      #                         data.frame(Distance=true.distance,
-      #                                    group=rep(paste(rownames(zscore.matrix)[i],colnames(zscore.matrix)[j]),length(true.distance))))
-      #Comparison.results$X=rownames(zscore.matrix)[i]
-      #Comparison.results$Y=colnames(zscore.matrix)[j]
-      #Detail_list[[rownames(zscore.matrix)[i]]]$Aggregated.randomization.results=rbind(Detail_list[[rownames(zscore.matrix)[i]]]$Aggregated.randomization.results,
-      #                                                                                 Comparison.results)
-      #wilcox.results=wilcox.test(log10(true.distance+1),log10(bootstrapping.sampling.distance+1),alternative = 'less')
-      #
-      #Detail_list[[rownames(zscore.matrix)[i]]][[colnames(zscore.matrix)[j]]]=list(Comparison.results=Comparison.results,
-      #                                                                             wilcox.results=wilcox.results)
-
-      #zscore.matrix[i,j]=median(true.distance)-median(bootstrapping.sampling.distance)
-      #pval.matrix[i,j]=wilcox.results$p.value
-      
-    #}
-    #Detail_list[[rownames(zscore.matrix)[i]]]$Aggregated.randomization.results=Detail_list[[rownames(zscore.matrix)[i]]]$Aggregated.randomization.results[-1,]
-    #Aggregated.randomization.results=Detail_list[[rownames(zscore.matrix)[i]]]$Aggregated.randomization.results
-    
-    #Aggregated.Randomization.Results.plot=ggplot(Aggregated.randomization.results[Aggregated.randomization.results$group!='Randomized',],
-     #                                                    aes(x=Distance,fill=Y))+geom_density(alpha=0.75)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
-    #Detail_list[[rownames(zscore.matrix)[i]]]$Aggregated.Randomization.Results.plot=Aggregated.Randomization.Results.plot
-    
-    
-    
-    
-    #print(i/nrow(zscore.matrix))
-  #}
   
-
+  
+  ####Aggregated Results from randomization####
   Overall.Aggregated.Randomization.Results=data.frame(Distance=0,group='',X='',Y='')
   for (comparison in names(Detail_list)) {
     Overall.Aggregated.Randomization.Results=rbind(Overall.Aggregated.Randomization.Results,
@@ -327,38 +240,70 @@ SCMapper=function(Object_A,Object_B,
     if (collapsed.results$padj[i]<=p.val.threshold) {
       cross_validation=wilcox.test(log10(as.numeric(Overall.Aggregated.Randomization.Results$Distance[as.character(Overall.Aggregated.Randomization.Results$group)==paste(as.character(collapsed.results$X[i]),
                                                                                                                                      as.character(collapsed.results$Y[i]),sep = ' ')])+1),
-                                   log10(as.numeric(Overall.Aggregated.Randomization.Results$Distance[Overall.Aggregated.Randomization.Results$X==collapsed.results$X[i]&Overall.Aggregated.Randomization.Results$group!='Randomized'])+1),alternative = 'less')
+                                   (log10(as.numeric(Overall.Aggregated.Randomization.Results$Distance[Overall.Aggregated.Randomization.Results$Y==collapsed.results$Y[i]&Overall.Aggregated.Randomization.Results$group!='Randomized'])+1)
+                                          ),alternative = 'less')
       if (cross_validation$p.value<=p.val.threshold){
         collapsed.results$significany[i]='Significant'
       }
     }
   }
-  collapsed.results$prediction.similarity='Insignificant'
+  collapsed.results$prediction.similarity='Unmapped'
+  collapsed.results$pval_list=''
   for (i in 1:nrow(collapsed.results)) {
     if (collapsed.results$significany[i]=='Significant') {
       X=as.character(collapsed.results$X[i])
-      #listofY=unique(as.character(collapsed.results$Y[collapsed.results$X==X]))
-      #average=data.frame(Y=listofY,average=rep(0,length(listofY)))
-      #for (j in 1:nrow(average)) {
-      #  average$average[j]=mean(Overall.Aggregated.Randomization.Results$Distance[Overall.Aggregated.Randomization.Results$X==X&
-      #                                                                            Overall.Aggregated.Randomization.Results$Y==average$Y[j]&
-       #                                                                           Overall.Aggregated.Randomization.Results$group!='Randomized'])
-      #}
-      if (collapsed.results$similarityscore[i]==max(collapsed.results$similarityscore[collapsed.results$X==X])){
-        candidates=collapsed.results$Y[i]
+      candidates=as.character(collapsed.results$Y[i])
+      
+      temp_X=Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$X==X
+                                                      &Overall.Aggregated.Randomization.Results$Y==candidates
+                                                      &Overall.Aggregated.Randomization.Results$group!='Randomized',]
+      temp_all=Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$X==X
+                                                      &Overall.Aggregated.Randomization.Results$group!='Randomized',]
+      
+      temp_Y=Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$Y==candidates
+                                                      &Overall.Aggregated.Randomization.Results$group!='Randomized',]
+      pval_list=c()
+      median_list=c()
+      for (idents in unique(temp_all$Y)[unique(temp_all$Y)!=candidates]) {
+        temp=temp_all[temp_all$Y==idents,]
+        test=wilcox.test(log10(temp_X$Distance+1),log10(temp$Distance+1),alternative = 'less')
+        pval_list=c(pval_list,test$p.value)
+      }
+      for (idents in unique(temp_all$Y)) {
+        temp=temp_all[temp_all$Y==idents,]
+        median_list=c(median_list,mean(temp$Distance))
         
+      }
+      
+      
+      
+      
+      collapsed.results$pval_list[i]=paste(pval_list,collapse = ' ')
+      
+      if (mean(temp_X$Distance)==min(median_list)&all(pval_list<=p.val.threshold)){
+        Test_reference=(log10(( Overall.Aggregated.Randomization.Results$Distance[Overall.Aggregated.Randomization.Results$Y==candidates&Overall.Aggregated.Randomization.Results$X!=X&
+                                                                                    Overall.Aggregated.Randomization.Results$group!='Randomized'  ])+1))
+        Test_reference=sample(Test_reference,size = roundsofrandomization)
         cross_validation=wilcox.test(log10(as.numeric(Overall.Aggregated.Randomization.Results$Distance[Overall.Aggregated.Randomization.Results$X==X&Overall.Aggregated.Randomization.Results$Y==candidates&Overall.Aggregated.Randomization.Results$group!='Randomized'])+1),
-                                     log10(as.numeric(Overall.Aggregated.Randomization.Results$Distance[Overall.Aggregated.Randomization.Results$Y==candidates&Overall.Aggregated.Randomization.Results$group!='Randomized'])+1),alternative = 'less')
-        global_validation=wilcox.test(log10(as.numeric(Overall.Aggregated.Randomization.Results$Distance[Overall.Aggregated.Randomization.Results$X==X&Overall.Aggregated.Randomization.Results$Y==candidates&Overall.Aggregated.Randomization.Results$group!='Randomized'])+1),
-                                     log10(as.numeric(Overall.Aggregated.Randomization.Results$Distance[Overall.Aggregated.Randomization.Results$group!='Randomized'])+1),alternative = 'less')
+                                Test_reference
+                                      ,alternative = 'less')
+        Test_reference=log10(as.numeric(Overall.Aggregated.Randomization.Results$Distance[Overall.Aggregated.Randomization.Results$group!='Randomized'])+1)
+        Test_reference=sample(Test_reference,size = roundsofrandomization)
+        
+       global_validation=wilcox.test(log10(as.numeric(Overall.Aggregated.Randomization.Results$Distance[Overall.Aggregated.Randomization.Results$X==X&
+                                                                                                      Overall.Aggregated.Randomization.Results$Y==candidates&Overall.Aggregated.Randomization.Results$group!='Randomized'])+1),
+                                     Test_reference
+                                            ,alternative = 'less')
         
         if (cross_validation$p.value<=p.val.threshold&global_validation$p.value<=p.val.threshold) {
-          collapsed.results$prediction.similarity[i]='Significant'
+          collapsed.results$prediction.similarity[i]='Mapped'
           
         }
-        }
+      }
     }
   }
+
+  ####Generate figures####
   Prediction.plot=ggplot(collapsed.results,aes(x=X,y=Y))+
     geom_point(aes(size=logpval,
                    colour=prediction.similarity))+theme(axis.text.x = element_text(angle=45,hjust=1),
@@ -382,11 +327,11 @@ SCMapper=function(Object_A,Object_B,
                                               panel.background = element_blank(),
                                               axis.line = element_line(colour = "black"))
   Overall.Aggregated.Randomization.Results.plot.1=ggplot(Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$group!='Randomized',],
-                                                       aes(x=Distance,fill=Y))+geom_density(alpha=0.75)+facet_wrap(facets = ~X,ncol = prediction_plot_ncol)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
+                                                       aes(x=log10(Distance+1),fill=Y))+geom_density(alpha=0.75)+facet_wrap(facets = ~X,ncol = prediction_plot_ncol)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
   
   Overall.Aggregated.Randomization.Results.plot.2=ggplot(Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$group!='Randomized',],
-                                                         aes(x=Distance,fill=X))+geom_density(alpha=0.75)+facet_wrap(facets = ~Y,ncol = prediction_plot_ncol)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
-  
+                                                         aes(x=log10(Distance+1),fill=X))+geom_density(alpha=0.75)+facet_wrap(facets = ~Y,ncol = prediction_plot_ncol)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
+  ####Return Results####
   results=list(zscore.matrix=zscore.matrix,
                pval.matrix=pval.matrix,
                collapsed.results=collapsed.results,
@@ -395,25 +340,40 @@ SCMapper=function(Object_A,Object_B,
                Overall.Aggregated.Randomization.Results=Overall.Aggregated.Randomization.Results,
                Overall.Aggregated.Randomization.Results.plot.1=Overall.Aggregated.Randomization.Results.plot.1,
                Overall.Aggregated.Randomization.Results.plot.2=Overall.Aggregated.Randomization.Results.plot.2,
-               Prediction.plot=Prediction.plot)
+               Prediction.plot=Prediction.plot,Expression.Correlation.Matrix=Expression.Correlation.Matrix)
   return(results)
 }
 
-
-
-
-
-Aggregated.distribution.plotter=function(Overall.Aggregated.Randomization.Results,ncol=2) {
-  library(ggplot2)
-  Overall.Aggregated.Randomization.Results.plot=ggplot(Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$group!='Randomized',],
-                                                       aes(x=Distance,fill=Y))+geom_density()+facet_wrap(facets = ~X,ncol = ncol)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
+Single.comparison.plotter=function(Overall.Aggregated.Randomization.Results,X=NULL,Y=NULL) {
+  if (!is.null(X)&!is.null(Y)){
+    table=Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$X==X&Overall.Aggregated.Randomization.Results$Y==Y,]
+    Plot=ggplot(table,
+                                                           aes(x=Distance,fill=group))+geom_density(alpha=0.75)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
+  }
+  else {
+    return(list())
+  }
+  return(Plot)
   
-  return(Overall.Aggregated.Randomization.Results.plot)
+  
+  
 }
 
 
 
-
+Aggregated.distribution.plotter=function(Overall.Aggregated.Randomization.Results,ncol=2,exclude_randomized=F) {
+  library(ggplot2)
+  if (exclude_randomized) {
+    Overall.Aggregated.Randomization.Results.plot=ggplot(Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$group!='Randomized',],
+                                                       aes(x=Distance,fill=Y))+geom_density()+facet_wrap(facets = ~X,ncol = ncol)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
+  }
+  else {
+    Overall.Aggregated.Randomization.Results.plot=ggplot(Overall.Aggregated.Randomization.Results,
+                                                         aes(x=Distance,fill=group))+geom_density()+facet_wrap(facets = ~X,ncol = ncol)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
+    
+  }
+  return(Overall.Aggregated.Randomization.Results.plot)
+}
 
 Subsetter=function(object,annotation_name,percentage,exclude=NULL) {
   #return subset cell names
@@ -432,3 +392,9 @@ Subsetter=function(object,annotation_name,percentage,exclude=NULL) {
   }
   return(results)
 }
+
+
+
+
+
+
