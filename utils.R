@@ -1,5 +1,6 @@
 sampling_and_distance_test <- function(TestCandidates,mapping.table,harmonized.space=NULL,
-                                       PCA.space=NULL,original.space=NULL,roundsofrandomization,meta.data,Name_of_object_A,Name_of_object_B,Expression.Correlation.Matrix) {
+                                       PCA.space=NULL,original.space=NULL,roundsofrandomization,meta.data,Name_of_object_A,Name_of_object_B
+                                       ,Expression.Correlation.Matrix,Matrix,correct_by_expression_Matrix) {
   a=as.character(unlist(strsplit(TestCandidates,split = "Object_42")))[1]
   b=as.character(unlist(strsplit(TestCandidates,split = "Object_42")))[2]
   require(fpc)
@@ -17,37 +18,65 @@ sampling_and_distance_test <- function(TestCandidates,mapping.table,harmonized.s
   AnnotationB.centroid=apply(PCA.space[AnnotationB,],2,median)
   true.distance=c()
   bootstrapping.sampling.distance=c()
-  backward.true.distance=c()
-  backward.sampling.distance=c()
   for (k in 1:roundsofrandomization) {
     sub_sampling_size=runif(1,0.25,0.75)
     if (sub_sampling_size*length(AnnotationA)<=2) {
       sub_sampling_1=PCA.space[AnnotationA,]
+      
       temp=PCA.space[sample(AnnotationA,size = 2,replace = T),]
       rownames(temp)=paste0(rownames(temp),'bootstrap')
+      cells_1=rownames(temp)
       sub_sampling_1=rbind(sub_sampling_1,temp)
       sub_sampling_2=PCA.space[AnnotationB,]
       temp=PCA.space[sample(AnnotationB,size = 2,replace = T),]
       rownames(temp)=paste0(rownames(temp),'bootstrap')
+      cells_2=rownames(temp)
+      
       sub_sampling_2=rbind(sub_sampling_2,temp)
       sub_sampling_1=apply(sub_sampling_1,2,median)
       sub_sampling_2=apply(sub_sampling_2,2,median)
     }
     else {
       sub_sampling_1=sample(AnnotationA,size = sub_sampling_size*length(AnnotationA) ,replace = F)
+      cells_1=sub_sampling_1
       sub_sampling_2=sample(AnnotationB,size = sub_sampling_size*length(AnnotationB) ,replace = F)
+      cells_2=sub_sampling_2
+      
       sub_sampling_1=apply(PCA.space[sub_sampling_1,],2,median)
       sub_sampling_2=apply(PCA.space[sub_sampling_2,],2,median)
     }
     sub_sampling_distance=euclidean(sub_sampling_1,sub_sampling_2)
-    true.distance=c(true.distance,sub_sampling_distance)
+    if (correct_by_expression_Matrix) {
+      true.correlation=Expression.Correlation.Matrix[a,b]
+    }
+    else {
+      true.correlation=1
+    }
+    
+    true.distance=c(true.distance,sub_sampling_distance/true.correlation)
     sampling_space_A=rownames(meta.data)[meta.data$object==Name_of_object_A]
     sampling_space_B=rownames(meta.data)[meta.data$object==Name_of_object_B]
     sampling_A_centroid_cells=sample(sampling_space_A,size = sub_sampling_size*length(AnnotationA))
     sampling_B_centroid_cells=sample(sampling_space_B,size = sub_sampling_size*length(AnnotationB))
     sampling_A_centroid=apply(PCA.space[sampling_A_centroid_cells,],2,median)
     sampling_B_centroid=apply(PCA.space[sampling_B_centroid_cells,],2,median)
-    sampling.distance=((euclidean(sub_sampling_1,sampling_B_centroid))+(euclidean(sub_sampling_2,sampling_A_centroid)))/2
+    if (correct_by_expression_Matrix) {
+      
+    #sub_sampling_1.to.sampling_B.correlation=Expression_correlation_Randomized(Matrix,cells_1,sampling_B_centroid_cells)
+    #sub_sampling_2.to.sampling_A.correlation=Expression_correlation_Randomized(Matrix,cells_2,sampling_A_centroid_cells)
+      sub_sampling_1.to.sampling_B.correlation=1
+      sub_sampling_2.to.sampling_A.correlation=1
+      #correlation=quantile(as.numeric(Expression.Correlation.Matrix))[4]
+      correlation=1
+      
+    }
+    else {
+      sub_sampling_1.to.sampling_B.correlation=1
+      sub_sampling_2.to.sampling_A.correlation=1
+      correlation=1
+    }
+    sampling.distance=((euclidean(sub_sampling_1,sampling_B_centroid)/sub_sampling_1.to.sampling_B.correlation
+                       +euclidean(sub_sampling_2,sampling_A_centroid)/sub_sampling_2.to.sampling_A.correlation)/2)/correlation
     bootstrapping.sampling.distance=c(bootstrapping.sampling.distance,sampling.distance)
     }
     wilcox.results=wilcox.test(log10(true.distance+1),log10(bootstrapping.sampling.distance+1),alternative = 'less', paired = T)
@@ -310,7 +339,7 @@ Expression_correlation <- function(Merged,annotation_Name,object_Name,Name_of_ob
   require(Matrix.utils)
   require(muscat)
   require(scater)
-  genes.test=Merged[[assay.use]]@var.features
+  genes.test=rownames(Merged)
   DefaultAssay(Merged)='RNA'
   Merged=NormalizeData(Merged,verbose = F)
   Merged <- SingleCellExperiment(
@@ -326,4 +355,20 @@ Expression_correlation <- function(Merged,annotation_Name,object_Name,Name_of_ob
   results_matrix=results_matrix[grepl(Name_of_object_A,rownames(results_matrix)),
                                 grepl(Name_of_object_B,colnames(results_matrix))]
   return(results_matrix)
+}
+
+
+
+Expression_correlation_Randomized <- function(Matrix,cellsA,cellsB) {
+  require(Matrix.utils)
+  require(muscat)
+  require(scater)
+  Matrix=Matrix[,colnames(Matrix)%in%c(cellsA,cellsB)]
+  CellsA.sum=rowSums(Matrix[,colnames(Matrix)%in%c(cellsA)])
+  CellsB.sum=rowSums(Matrix[,colnames(Matrix)%in%c(cellsB)])
+  
+  
+  results=cor(CellsA.sum,CellsB.sum,method = 'spearman')
+  results=(results+1)/2
+  return(results)
 }

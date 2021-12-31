@@ -4,7 +4,7 @@ SCMapper=function(Object_A,Object_B,
          Batch_A=NULL,Batch_B=NULL,
          numbersofPC=30,roundsofrandomization=1000,
          Normalization_method='LogNormalize',nFeature=2000,harmonize=F,
-         p.val.threshold=0.05,prediction_plot_ncol=2,number_of_core=4,mt.feature.pattern=NULL) {
+         p.val.threshold=0.05,prediction_plot_ncol=2,number_of_core=4,mt.feature.pattern=NULL,correct_by_expression_Matrix=T) {
   require(cluster)
   require(reshape)
   require(ggplot2)
@@ -60,17 +60,29 @@ SCMapper=function(Object_A,Object_B,
       Merged=RunPCA(Merged,npcs = numbersofPC,verbose = F)
 
     }
-    Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
-                                                         Name_of_object_B=Name_of_object_B,assay.use = 'SCT')
+    if (correct_by_expression_Matrix) {
+      genes.test=Merged[['SCT']]@var.features
+      Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
+                                                           Name_of_object_B=Name_of_object_B,assay.use = 'SCT')
+    }
+    else {
+      genes.test=0
+      Expression.Correlation.Matrix=0
+    }
     print('Finished SCT Normalization')
   }
   if (Normalization_method=='LogNormalize'){
     Merged=NormalizeData(Merged,verbose = F)
     Merged=FindVariableFeatures(Merged,verbose = F,nfeatures = nFeature)
-    
+    if (correct_by_expression_Matrix) {
+    genes.test=Merged[['RNA']]@var.features
     Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
                                                          Name_of_object_B=Name_of_object_B,assay.use = 'RNA')
-    
+    }
+    else {
+      genes.test=0
+      Expression.Correlation.Matrix=0
+    }
     
     if ('percent.mt'%in%names(Merged@meta.data)) {
       Merged=ScaleData(Merged,verbose = F,vars.to.regress = 'percent.mt')
@@ -87,10 +99,15 @@ SCMapper=function(Object_A,Object_B,
     Merged=FindVariableFeatures(Merged,verbose = F,nfeatures = nFeature)
     Merged=ScaleData(Merged,verbose = F)
     Merged=RunPCA(Merged,npcs = numbersofPC,verbose = F)
+    if (correct_by_expression_Matrix) {
+    genes.test=Merged[['RNA']]@var.features
     Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
                                                          Name_of_object_B=Name_of_object_B,assay.use = 'RNA')
-
-    
+    }
+    else {
+      genes.test=0
+      Expression.Correlation.Matrix=0
+    }
     
   }
   
@@ -132,7 +149,17 @@ SCMapper=function(Object_A,Object_B,
     original.space=PCA.space$original.space
     
     meta.data=Merged@meta.data
-
+    DefaultAssay(Merged)='RNA'
+    Merged=NormalizeData(Merged,verbose = F)
+    if (correct_by_expression_Matrix){
+    #Matrix=as.matrix(Merged@assays$RNA@data[genes.test,,,])
+      Matrix=0
+      
+    }
+    else {
+      Matrix=0
+    }
+    
     rm(Merged)
     cl <- makeCluster(number_of_core)
     registerDoSNOW(cl)
@@ -149,7 +176,8 @@ SCMapper=function(Object_A,Object_B,
       source('utils.R')
       
       Results=sampling_and_distance_test(i,mapping.table=mapping.table,harmonized.space=harmonized.space,original.space=original.space,roundsofrandomization=roundsofrandomization
-                                         ,meta.data=meta.data,Name_of_object_A=Name_of_object_A,Name_of_object_B=Name_of_object_B,Expression.Correlation.Matrix=Expression.Correlation.Matrix)
+                                         ,meta.data=meta.data,Name_of_object_A=Name_of_object_A,Name_of_object_B=Name_of_object_B,
+                                         Expression.Correlation.Matrix=Expression.Correlation.Matrix,Matrix=Matrix,correct_by_expression_Matrix=correct_by_expression_Matrix)
       return(Results)
     }
   }
@@ -164,6 +192,18 @@ SCMapper=function(Object_A,Object_B,
                             Name_of_object_B=Name_of_object_B) 
 
   meta.data=Merged@meta.data
+  
+  
+  DefaultAssay(Merged)='RNA'
+  Merged=NormalizeData(Merged,verbose = F)
+  if (correct_by_expression_Matrix){
+    #Matrix=as.matrix(Merged@assays$RNA@data[genes.test,,,])
+    Matrix=0
+    
+  }
+  else {
+    Matrix=0
+  }  
 
   rm(Merged)
   cl <- makeCluster(number_of_core)
@@ -177,7 +217,8 @@ SCMapper=function(Object_A,Object_B,
     source('utils.R')
     
     Results=sampling_and_distance_test(i,mapping.table=mapping.table,PCA.space=PCA.space,roundsofrandomization=roundsofrandomization,meta.data=meta.data
-                                       ,Name_of_object_A=Name_of_object_A,Name_of_object_B=Name_of_object_B,Expression.Correlation.Matrix=Expression.Correlation.Matrix)
+                                       ,Name_of_object_A=Name_of_object_A,Name_of_object_B=Name_of_object_B,
+                                       Expression.Correlation.Matrix=Expression.Correlation.Matrix,Matrix=Matrix,correct_by_expression_Matrix=correct_by_expression_Matrix)
     return(Results)
   }
   }
@@ -340,7 +381,9 @@ SCMapper=function(Object_A,Object_B,
                Overall.Aggregated.Randomization.Results=Overall.Aggregated.Randomization.Results,
                Overall.Aggregated.Randomization.Results.plot.1=Overall.Aggregated.Randomization.Results.plot.1,
                Overall.Aggregated.Randomization.Results.plot.2=Overall.Aggregated.Randomization.Results.plot.2,
-               Prediction.plot=Prediction.plot,Expression.Correlation.Matrix=Expression.Correlation.Matrix)
+               Prediction.plot=Prediction.plot,Expression.Correlation.Matrix=Expression.Correlation.Matrix,
+               PCA.space=PCA.space,
+               mapping.table=mapping.table)
   return(results)
 }
 
