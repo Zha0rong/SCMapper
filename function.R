@@ -67,7 +67,8 @@ SCMapper=function(Object_A,Object_B,
     }
     else {
       genes.test=0
-      Expression.Correlation.Matrix=0
+      Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
+                                                           Name_of_object_B=Name_of_object_B,assay.use = 'SCT')
     }
     print('Finished SCT Normalization')
   }
@@ -81,7 +82,8 @@ SCMapper=function(Object_A,Object_B,
     }
     else {
       genes.test=0
-      Expression.Correlation.Matrix=0
+      Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
+                                                           Name_of_object_B=Name_of_object_B,assay.use = 'RNA')
     }
     
     if ('percent.mt'%in%names(Merged@meta.data)) {
