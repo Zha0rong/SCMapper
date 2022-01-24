@@ -64,19 +64,16 @@ sampling_and_distance_test <- function(TestCandidates,mapping.table,harmonized.s
       
     #sub_sampling_1.to.sampling_B.correlation=Expression_correlation_Randomized(Matrix,cells_1,sampling_B_centroid_cells)
     #sub_sampling_2.to.sampling_A.correlation=Expression_correlation_Randomized(Matrix,cells_2,sampling_A_centroid_cells)
-      sub_sampling_1.to.sampling_B.correlation=1
-      sub_sampling_2.to.sampling_A.correlation=1
+      sub_sampling_1.to.sampling_B.correlation=sample(as.numeric(Expression.Correlation.Matrix[a,]),size = 1)
+      sub_sampling_2.to.sampling_A.correlation=sample(as.numeric(Expression.Correlation.Matrix[,b]),size = 1)
       #correlation=quantile(as.numeric(Expression.Correlation.Matrix))[4]
-      correlation=sample(as.numeric(Expression.Correlation.Matrix),size = 1)
-      
     }
     else {
       sub_sampling_1.to.sampling_B.correlation=1
       sub_sampling_2.to.sampling_A.correlation=1
-      correlation=1
     }
-    sampling.distance=((euclidean(sub_sampling_1,sampling_B_centroid)
-                       +euclidean(sub_sampling_2,sampling_A_centroid))/2)/correlation
+    sampling.distance=(((euclidean(sub_sampling_1,sampling_B_centroid)/sub_sampling_1.to.sampling_B.correlation)
+                       +(euclidean(sub_sampling_2,sampling_A_centroid)/sub_sampling_2.to.sampling_A.correlation))/2)
     bootstrapping.sampling.distance=c(bootstrapping.sampling.distance,sampling.distance)
     }
     wilcox.results=wilcox.test(log10(true.distance+1),log10(bootstrapping.sampling.distance+1),alternative = 'less', paired = T)
@@ -351,7 +348,7 @@ Expression_correlation <- function(Merged,annotation_Name,object_Name,Name_of_ob
   
   results_matrix=assay(Expression.matrix)
   results_matrix=results_matrix[rowSums(results_matrix)>0,]
-  results_matrix=cor(results_matrix,method = 'pearson')
+  results_matrix=cor(results_matrix,method = 'spearman')
   results_matrix=(results_matrix+1)/2
   results_matrix=results_matrix[grepl(Name_of_object_A,rownames(results_matrix)),
                                 grepl(Name_of_object_B,colnames(results_matrix))]
@@ -369,7 +366,7 @@ Expression_correlation_Randomized <- function(Matrix,cellsA,cellsB) {
   CellsB.sum=rowSums(Matrix[,colnames(Matrix)%in%c(cellsB)])
   
   
-  results=cor(CellsA.sum,CellsB.sum,method = 'pearson')
+  results=cor(CellsA.sum,CellsB.sum,method = 'spearman')
   results=(results+1)/2
   return(results)
 }
