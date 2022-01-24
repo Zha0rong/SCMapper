@@ -3,7 +3,7 @@ SCMapper=function(Object_A,Object_B,
          Name_of_object_A,Name_of_object_B,
          Batch_A=NULL,Batch_B=NULL,
          numbersofPC=30,roundsofrandomization=1000,
-         Normalization_method='LogNormalize',nFeature=2000,harmonize=F,
+         Normalization_method='LogNormalize',nFeature=4000,harmonize=F,
          p.val.threshold=0.05,prediction_plot_ncol=2,number_of_core=4,mt.feature.pattern=NULL,correct_by_expression_Matrix=T) {
   require(cluster)
   require(reshape)
@@ -63,12 +63,12 @@ SCMapper=function(Object_A,Object_B,
     if (correct_by_expression_Matrix) {
       genes.test=Merged[['SCT']]@var.features
       Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
-                                                           Name_of_object_B=Name_of_object_B,assay.use = 'SCT')
+                                                           Name_of_object_B=Name_of_object_B,assay.use = 'SCT',genes.test=genes.test)
     }
     else {
-      genes.test=0
+      genes.test=Merged[['SCT']]@var.features
       Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
-                                                           Name_of_object_B=Name_of_object_B,assay.use = 'SCT')
+                                                           Name_of_object_B=Name_of_object_B,assay.use = 'SCT',genes.test=genes.test)
     }
     print('Finished SCT Normalization')
   }
@@ -78,12 +78,12 @@ SCMapper=function(Object_A,Object_B,
     if (correct_by_expression_Matrix) {
     genes.test=Merged[['RNA']]@var.features
     Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
-                                                         Name_of_object_B=Name_of_object_B,assay.use = 'RNA')
+                                                         Name_of_object_B=Name_of_object_B,assay.use = 'RNA',genes.test=genes.test)
     }
     else {
-      genes.test=0
+      genes.test=Merged[['RNA']]@var.features
       Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
-                                                           Name_of_object_B=Name_of_object_B,assay.use = 'RNA')
+                                                           Name_of_object_B=Name_of_object_B,assay.use = 'RNA',genes.test=genes.test)
     }
     
     if ('percent.mt'%in%names(Merged@meta.data)) {
@@ -104,11 +104,12 @@ SCMapper=function(Object_A,Object_B,
     if (correct_by_expression_Matrix) {
     genes.test=Merged[['RNA']]@var.features
     Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
-                                                         Name_of_object_B=Name_of_object_B,assay.use = 'RNA')
+                                                         Name_of_object_B=Name_of_object_B,assay.use = 'RNA',genes.test=genes.test)
     }
     else {
-      genes.test=0
-      Expression.Correlation.Matrix=0
+      genes.test=Merged[['RNA']]@var.features
+      Expression.Correlation.Matrix=Expression_correlation(Merged=Merged,annotation_Name = 'scmapper',object_Name = 'object',Name_of_object_A = Name_of_object_A,
+                                                           Name_of_object_B=Name_of_object_B,assay.use = 'RNA',genes.test=genes.test)
     }
     
   }

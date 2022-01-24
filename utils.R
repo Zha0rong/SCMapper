@@ -335,12 +335,12 @@ harmonize_within_sample <- function(harmonize,Normalization_method,Merged,number
 }
 
 
-Expression_correlation <- function(Merged,annotation_Name,object_Name,Name_of_object_A,Name_of_object_B,assay.use) {
+Expression_correlation <- function(Merged,annotation_Name,object_Name,Name_of_object_A,Name_of_object_B,assay.use,genes.test) {
   require(Matrix.utils)
   require(muscat)
   require(scater)
-  genes.test=rownames(Merged)
   DefaultAssay(Merged)='RNA'
+  genes.test=rownames(Merged)
   Merged=NormalizeData(Merged,verbose = F)
   Merged <- SingleCellExperiment(
     assays = list(counts = Merged@assays$RNA@data[genes.test,,,]), 
@@ -350,6 +350,7 @@ Expression_correlation <- function(Merged,annotation_Name,object_Name,Name_of_ob
   
   
   results_matrix=assay(Expression.matrix)
+  results_matrix=results_matrix[rowSums(results_matrix)>0,]
   results_matrix=cor(results_matrix,method = 'pearson')
   results_matrix=(results_matrix+1)/2
   results_matrix=results_matrix[grepl(Name_of_object_A,rownames(results_matrix)),
