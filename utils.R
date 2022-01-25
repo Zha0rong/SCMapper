@@ -50,7 +50,7 @@ sampling_and_distance_test <- function(TestCandidates,mapping.table,harmonized.s
       true.correlation=Expression.Correlation.Matrix[a,b]
     }
     else {
-      true.correlation=1
+      true.correlation=Expression.Correlation.Matrix[a,b]
     }
     
     true.distance=c(true.distance,sub_sampling_distance/true.correlation)
@@ -64,21 +64,20 @@ sampling_and_distance_test <- function(TestCandidates,mapping.table,harmonized.s
       
     #sub_sampling_1.to.sampling_B.correlation=Expression_correlation_Randomized(Matrix,cells_1,sampling_B_centroid_cells)
     #sub_sampling_2.to.sampling_A.correlation=Expression_correlation_Randomized(Matrix,cells_2,sampling_A_centroid_cells)
-      sub_sampling_1.to.sampling_B.correlation=sample(as.numeric(Expression.Correlation.Matrix[a,]),size = 1)
-      sub_sampling_2.to.sampling_A.correlation=sample(as.numeric(Expression.Correlation.Matrix[,b]),size = 1)
+      sub_sampling_1.to.sampling_B.correlation=sample(as.numeric(Expression.Correlation.Matrix),size = 1)
+      sub_sampling_2.to.sampling_A.correlation=sample(as.numeric(Expression.Correlation.Matrix),size = 1)
       #correlation=quantile(as.numeric(Expression.Correlation.Matrix))[4]
     }
     else {
       sub_sampling_1.to.sampling_B.correlation=1
       sub_sampling_2.to.sampling_A.correlation=1
     }
-    sampling.distance=(((euclidean(sub_sampling_1,sampling_B_centroid)/sub_sampling_1.to.sampling_B.correlation)
-                       +(euclidean(sub_sampling_2,sampling_A_centroid)/sub_sampling_2.to.sampling_A.correlation))/2)
+    sampling.distance=(((euclidean(sub_sampling_1,sampling_B_centroid))
+                       +(euclidean(sub_sampling_2,sampling_A_centroid)))/2)/((sub_sampling_1.to.sampling_B.correlation+sub_sampling_2.to.sampling_A.correlation)/2)
     bootstrapping.sampling.distance=c(bootstrapping.sampling.distance,sampling.distance)
     }
     wilcox.results=wilcox.test(log10(true.distance+1),log10(bootstrapping.sampling.distance+1),alternative = 'less', paired = T)
     Comparison.results=data.frame(Distance=bootstrapping.sampling.distance,group=rep('Randomized',length(bootstrapping.sampling.distance)))
-    #/Expression.Correlation.Matrix[a,b]
     Comparison.results=rbind(Comparison.results,data.frame(Distance=true.distance,group=rep(paste(a,b),length(true.distance))))
     Comparison.results$X=a
     Comparison.results$Y=b
@@ -343,12 +342,12 @@ Expression_correlation <- function(Merged,annotation_Name,object_Name,Name_of_ob
     assays = list(counts = Merged@assays$RNA@data[genes.test,,,]), 
     colData = Merged@meta.data
   )
-  Expression.matrix=aggregateData(Merged,by = annotation_Name,fun = 'sum')
+  Expression.matrix=aggregateData(Merged,by = annotation_Name,fun = 'mean')
   
   
   results_matrix=assay(Expression.matrix)
   results_matrix=results_matrix[rowSums(results_matrix)>0,]
-  results_matrix=cor(results_matrix,method = 'spearman')
+  results_matrix=cor(results_matrix,method = 'pearson')
   results_matrix=(results_matrix+1)/2
   results_matrix=results_matrix[grepl(Name_of_object_A,rownames(results_matrix)),
                                 grepl(Name_of_object_B,colnames(results_matrix))]
@@ -370,3 +369,58 @@ Expression_correlation_Randomized <- function(Matrix,cellsA,cellsB) {
   results=(results+1)/2
   return(results)
 }
+
+
+
+
+Single.comparison.plotter=function(Overall.Aggregated.Randomization.Results,X=NULL,Y=NULL) {
+  if (!is.null(X)&!is.null(Y)){
+    table=Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$X==X&Overall.Aggregated.Randomization.Results$Y==Y,]
+    Plot=ggplot(table,
+                aes(x=Distance,fill=group))+geom_density(alpha=0.75)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
+  }
+  else {
+    return(list())
+  }
+  return(Plot)
+  
+  
+  
+}
+
+
+
+Aggregated.distribution.plotter=function(Overall.Aggregated.Randomization.Results,ncol=2,exclude_randomized=F) {
+  library(ggplot2)
+  if (exclude_randomized) {
+    Overall.Aggregated.Randomization.Results.plot=ggplot(Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$group!='Randomized',],
+                                                         aes(x=Distance,fill=Y))+geom_density()+facet_wrap(facets = ~X,ncol = ncol)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
+  }
+  else {
+    Overall.Aggregated.Randomization.Results.plot=ggplot(Overall.Aggregated.Randomization.Results,
+                                                         aes(x=Distance,fill=group))+geom_density()+facet_wrap(facets = ~X,ncol = ncol)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
+    
+  }
+  return(Overall.Aggregated.Randomization.Results.plot)
+}
+
+Subsetter=function(object,annotation_name,percentage,exclude=NULL) {
+  #return subset cell names
+  results=c()
+  if (is.null(exclude)){
+    for (i in unique(object@meta.data[[annotation_name]])) {
+      temp=sample(rownames(object@meta.data)[object@meta.data[[annotation_name]]==i],size = length(rownames(object@meta.data)[object@meta.data[[annotation_name]]==i])*percentage,replace = F)
+      results=c(results,temp)
+    }
+  }
+  else {
+    for (i in unique(object@meta.data[[annotation_name]])[!unique(object@meta.data[[annotation_name]])%in%exclude]) {
+      temp=sample(rownames(object@meta.data)[object@meta.data[[annotation_name]]==i],size = length(rownames(object@meta.data)[object@meta.data[[annotation_name]]==i])*percentage,replace = F)
+      results=c(results,temp)
+    } 
+  }
+  return(results)
+}
+
+
+

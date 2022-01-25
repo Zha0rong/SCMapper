@@ -292,12 +292,10 @@ SCMapper=function(Object_A,Object_B,
     }
   }
   collapsed.results$prediction.similarity='Unmapped'
-  collapsed.results$pval_list=''
   for (i in 1:nrow(collapsed.results)) {
     if (collapsed.results$significany[i]=='Significant') {
       X=as.character(collapsed.results$X[i])
       candidates=as.character(collapsed.results$Y[i])
-      
       temp_X=Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$X==X
                                                       &Overall.Aggregated.Randomization.Results$Y==candidates
                                                       &Overall.Aggregated.Randomization.Results$group!='Randomized',]
@@ -306,25 +304,17 @@ SCMapper=function(Object_A,Object_B,
       
       temp_Y=Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$Y==candidates
                                                       &Overall.Aggregated.Randomization.Results$group!='Randomized',]
-      pval_list=c()
       median_list=c()
       for (idents in unique(temp_all$Y)[unique(temp_all$Y)!=candidates]) {
         temp=temp_all[temp_all$Y==idents,]
         test=wilcox.test(log10(temp_X$Distance+1),log10(temp$Distance+1),alternative = 'less')
-        pval_list=c(pval_list,test$p.value)
       }
       for (idents in unique(temp_all$Y)) {
         temp=temp_all[temp_all$Y==idents,]
         median_list=c(median_list,mean(temp$Distance))
         
       }
-      
-      
-      
-      
-      collapsed.results$pval_list[i]=paste(pval_list,collapse = ' ')
-      
-      if (mean(temp_X$Distance)==min(median_list)&all(pval_list<=p.val.threshold)){
+      if (mean(temp_X$Distance)==min(median_list)){
         Test_reference=(log10(( Overall.Aggregated.Randomization.Results$Distance[Overall.Aggregated.Randomization.Results$Y==candidates&Overall.Aggregated.Randomization.Results$X!=X&
                                                                                     Overall.Aggregated.Randomization.Results$group!='Randomized'  ])+1))
         Test_reference=sample(Test_reference,size = roundsofrandomization)
@@ -389,57 +379,6 @@ SCMapper=function(Object_A,Object_B,
                mapping.table=mapping.table)
   return(results)
 }
-
-Single.comparison.plotter=function(Overall.Aggregated.Randomization.Results,X=NULL,Y=NULL) {
-  if (!is.null(X)&!is.null(Y)){
-    table=Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$X==X&Overall.Aggregated.Randomization.Results$Y==Y,]
-    Plot=ggplot(table,
-                                                           aes(x=Distance,fill=group))+geom_density(alpha=0.75)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
-  }
-  else {
-    return(list())
-  }
-  return(Plot)
-  
-  
-  
-}
-
-
-
-Aggregated.distribution.plotter=function(Overall.Aggregated.Randomization.Results,ncol=2,exclude_randomized=F) {
-  library(ggplot2)
-  if (exclude_randomized) {
-    Overall.Aggregated.Randomization.Results.plot=ggplot(Overall.Aggregated.Randomization.Results[Overall.Aggregated.Randomization.Results$group!='Randomized',],
-                                                       aes(x=Distance,fill=Y))+geom_density()+facet_wrap(facets = ~X,ncol = ncol)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
-  }
-  else {
-    Overall.Aggregated.Randomization.Results.plot=ggplot(Overall.Aggregated.Randomization.Results,
-                                                         aes(x=Distance,fill=group))+geom_density()+facet_wrap(facets = ~X,ncol = ncol)+theme(axis.title.x = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),panel.background = element_blank(),axis.line = element_line(colour = "black"))
-    
-  }
-  return(Overall.Aggregated.Randomization.Results.plot)
-}
-
-Subsetter=function(object,annotation_name,percentage,exclude=NULL) {
-  #return subset cell names
-  results=c()
-  if (is.null(exclude)){
-  for (i in unique(object@meta.data[[annotation_name]])) {
-    temp=sample(rownames(object@meta.data)[object@meta.data[[annotation_name]]==i],size = length(rownames(object@meta.data)[object@meta.data[[annotation_name]]==i])*percentage,replace = F)
-    results=c(results,temp)
-  }
-  }
-  else {
-    for (i in unique(object@meta.data[[annotation_name]])[!unique(object@meta.data[[annotation_name]])%in%exclude]) {
-      temp=sample(rownames(object@meta.data)[object@meta.data[[annotation_name]]==i],size = length(rownames(object@meta.data)[object@meta.data[[annotation_name]]==i])*percentage,replace = F)
-      results=c(results,temp)
-    } 
-  }
-  return(results)
-}
-
-
 
 
 
